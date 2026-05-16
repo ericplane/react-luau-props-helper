@@ -1,4 +1,5 @@
 import * as assert from "assert";
+import * as vscode from "vscode";
 import {
   buildCodeMask,
   findEnclosingPropsCall,
@@ -193,6 +194,181 @@ suite("Default props map", () => {
 
   test("contains TextLabel with Text", () => {
     assert.ok(_internal.defaultPropsMap.TextLabel.includes("Text"));
+  });
+
+  test("Frame includes modern GuiObject props (Interactable, Active, Selectable)", () => {
+    const frame = _internal.defaultPropsMap.Frame;
+    assert.ok(frame.includes("Interactable"));
+    assert.ok(frame.includes("Active"));
+    assert.ok(frame.includes("Selectable"));
+    assert.ok(frame.includes("Name"));
+  });
+
+  test("UIListLayout includes Wraps and HorizontalFlex", () => {
+    const list = _internal.defaultPropsMap.UIListLayout;
+    assert.ok(list.includes("Wraps"));
+    assert.ok(list.includes("HorizontalFlex"));
+    assert.ok(list.includes("VerticalFlex"));
+  });
+
+  test("ScrollingFrame includes modern scroll-bar props", () => {
+    const sf = _internal.defaultPropsMap.ScrollingFrame;
+    assert.ok(sf.includes("ScrollBarImageColor3"));
+    assert.ok(sf.includes("ElasticBehavior"));
+    assert.ok(sf.includes("HorizontalScrollBarInset"));
+  });
+
+  test("TextLabel includes FontFace", () => {
+    assert.ok(_internal.defaultPropsMap.TextLabel.includes("FontFace"));
+  });
+
+  test("New utility classes are present", () => {
+    assert.ok(_internal.defaultPropsMap.UIAspectRatioConstraint);
+    assert.ok(_internal.defaultPropsMap.UIFlexItem);
+    assert.ok(_internal.defaultPropsMap.UISizeConstraint);
+    assert.ok(_internal.defaultPropsMap.UIScale);
+    assert.ok(_internal.defaultPropsMap.UITableLayout);
+  });
+});
+
+// ============================================================================
+// 1.4.0 — type-aware snippets
+// ============================================================================
+
+import { _testing } from "../extension";
+
+suite("renderTypeSnippet", () => {
+  test("Color3 yields fromRGB template", () => {
+    const s = _testing.renderTypeSnippet("Color3");
+    assert.ok(s && s.startsWith("Color3.fromRGB("));
+    assert.ok(s.includes("${1:"));
+  });
+
+  test("UDim2 yields four-arg template", () => {
+    const s = _testing.renderTypeSnippet("UDim2");
+    assert.ok(s && s.includes("UDim2.new"));
+    assert.ok(s.includes("${4:0}"));
+  });
+
+  test("boolean yields a choice element", () => {
+    const s = _testing.renderTypeSnippet("boolean");
+    assert.strictEqual(s, "${1|true,false|}");
+  });
+
+  test("Enum.* falls back to a generic template", () => {
+    const s = _testing.renderTypeSnippet("Enum.HorizontalAlignment");
+    assert.strictEqual(s, "Enum.HorizontalAlignment.${1}");
+  });
+
+  test("unknown types return undefined", () => {
+    assert.strictEqual(_testing.renderTypeSnippet("MysteryType"), undefined);
+  });
+});
+
+suite("Class hierarchy", () => {
+  test("GuiObject base exists and has core props", () => {
+    const gui = _testing.classHierarchy.GuiObject;
+    assert.ok(gui, "GuiObject should be defined");
+    assert.ok(gui.own.includes("BackgroundColor3"));
+    assert.ok(gui.own.includes("Interactable"));
+    assert.ok(gui.own.includes("Position"));
+    assert.ok(gui.own.includes("Size"));
+  });
+
+  test("Frame inherits from GuiObject and adds nothing of its own", () => {
+    const frame = _testing.classHierarchy.Frame;
+    assert.strictEqual(frame.inherits, "GuiObject");
+    assert.deepStrictEqual(frame.own, []);
+  });
+
+  test("TextButton chains inheritance: GuiObject → GuiButton → TextButton", () => {
+    const tb = _testing.classHierarchy.TextButton;
+    assert.strictEqual(tb.inherits, "GuiButton");
+    // `own` carries the text-rendering props (mirrored from TextLabel) since
+    // TextButton is a button-and-label hybrid in our model.
+    assert.ok(tb.own.includes("Text"));
+    assert.ok(tb.own.includes("FontFace"));
+  });
+
+  test("Flattening TextButton includes GuiObject, GuiButton, and text props", () => {
+    const flat = _testing.flattenClassProps("TextButton");
+    // From GuiObject:
+    assert.ok(flat.includes("BackgroundColor3"));
+    assert.ok(flat.includes("Position"));
+    assert.ok(flat.includes("Interactable"));
+    // From GuiButton:
+    assert.ok(flat.includes("AutoButtonColor"));
+    assert.ok(flat.includes("Selected"));
+    // Mirrored text props on TextButton itself:
+    assert.ok(flat.includes("Text"));
+    assert.ok(flat.includes("FontFace"));
+  });
+
+  test("Flattening ImageButton includes GuiButton extras and image props", () => {
+    const flat = _testing.flattenClassProps("ImageButton");
+    assert.ok(flat.includes("Image"));
+    assert.ok(flat.includes("ImageColor3"));
+    assert.ok(flat.includes("AutoButtonColor"));
+    assert.ok(flat.includes("HoverImage"));
+  });
+
+  test("UILayout subclasses share Padding/FillDirection from UILayout", () => {
+    for (const cls of [
+      "UIListLayout",
+      "UIGridLayout",
+      "UIPageLayout",
+      "UITableLayout",
+    ]) {
+      const flat = _testing.flattenClassProps(cls);
+      assert.ok(flat.includes("FillDirection"), `${cls} should inherit FillDirection`);
+      assert.ok(flat.includes("HorizontalAlignment"), `${cls} should inherit HorizontalAlignment`);
+    }
+  });
+
+  test("Flattening is idempotent (no duplicate prop names)", () => {
+    const flat = _testing.flattenClassProps("ScrollingFrame");
+    assert.strictEqual(
+      new Set(flat).size,
+      flat.length,
+      "no duplicates expected after dedupe"
+    );
+  });
+
+  test("Unknown class flattens to empty", () => {
+    assert.deepStrictEqual(
+      _testing.flattenClassProps("NotARealClass"),
+      []
+    );
+  });
+});
+
+suite("PROP_TYPES coverage", () => {
+  test("known Color3-typed props are tagged", () => {
+    for (const name of [
+      "BackgroundColor3",
+      "TextColor3",
+      "BorderColor3",
+      "ImageColor3",
+    ]) {
+      assert.strictEqual(
+        _testing.PROP_TYPES[name],
+        "Color3",
+        `expected ${name} → Color3`
+      );
+    }
+  });
+
+  test("Interactable is a boolean", () => {
+    assert.strictEqual(_testing.PROP_TYPES.Interactable, "boolean");
+  });
+
+  test("Name is a string", () => {
+    assert.strictEqual(_testing.PROP_TYPES.Name, "string");
+  });
+
+  test("Size and Position are UDim2", () => {
+    assert.strictEqual(_testing.PROP_TYPES.Size, "UDim2");
+    assert.strictEqual(_testing.PROP_TYPES.Position, "UDim2");
   });
 });
 
@@ -437,5 +613,278 @@ suite("scanDocument — caching", () => {
     const a = scanDocument(text, ALIASES);
     const b = scanDocument(text, ALIASES);
     assert.strictEqual(a, b);
+  });
+});
+
+// ============================================================================
+// 1.3.0 — cross-file resolution (unit)
+// ============================================================================
+//
+// The full WorkspaceIndex relies on VS Code's file watcher and workspace
+// APIs. The hard part — parsing — is already covered by scanDocument tests.
+// Here we just verify the *aggregation* logic that `findComponent` will run
+// over the cache, by parsing two pretend "files" the same way the index
+// does and looking up across them.
+
+// ============================================================================
+// 1.5.0 — new helpers
+// ============================================================================
+
+import {
+  extractColorLiterals,
+  findAllCreateElementCalls,
+  buildCallTree,
+} from "../extension";
+
+suite("Events (1.5)", () => {
+  test("GuiObject events include MouseEnter and MouseLeave", () => {
+    const events = _testing.flattenClassEvents("GuiObject");
+    assert.ok(events.includes("MouseEnter"));
+    assert.ok(events.includes("MouseLeave"));
+  });
+
+  test("TextButton inherits Activated from GuiButton", () => {
+    const events = _testing.flattenClassEvents("TextButton");
+    assert.ok(events.includes("Activated"));
+    assert.ok(events.includes("MouseButton1Click"));
+    // Still has GuiObject events:
+    assert.ok(events.includes("MouseEnter"));
+  });
+
+  test("TextBox has TextChanged", () => {
+    const events = _testing.flattenClassEvents("TextBox");
+    assert.ok(events.includes("TextChanged"));
+    assert.ok(events.includes("Focused"));
+  });
+
+  test("Frame doesn't have button-only events", () => {
+    const events = _testing.flattenClassEvents("Frame");
+    assert.ok(!events.includes("Activated"));
+    assert.ok(!events.includes("MouseButton1Click"));
+  });
+});
+
+suite("findIntroducingClass", () => {
+  test("BackgroundColor3 is introduced on GuiObject", () => {
+    assert.strictEqual(
+      _testing.findIntroducingClass("Frame", "BackgroundColor3"),
+      "GuiObject"
+    );
+    assert.strictEqual(
+      _testing.findIntroducingClass("TextLabel", "BackgroundColor3"),
+      "GuiObject"
+    );
+  });
+
+  test("AutoButtonColor is introduced on GuiButton", () => {
+    assert.strictEqual(
+      _testing.findIntroducingClass("TextButton", "AutoButtonColor"),
+      "GuiButton"
+    );
+  });
+
+  test("CanvasSize is introduced on ScrollingFrame itself", () => {
+    assert.strictEqual(
+      _testing.findIntroducingClass("ScrollingFrame", "CanvasSize"),
+      "ScrollingFrame"
+    );
+  });
+
+  test("unknown prop returns undefined", () => {
+    assert.strictEqual(
+      _testing.findIntroducingClass("Frame", "NotAProp"),
+      undefined
+    );
+  });
+});
+
+suite("extractColorLiterals", () => {
+  test("captures Color3.fromRGB(255, 128, 0)", () => {
+    const result = extractColorLiterals("local x = Color3.fromRGB(255, 128, 0)");
+    assert.strictEqual(result.length, 1);
+    assert.strictEqual(result[0].r, 1);
+    assert.strictEqual(result[0].g, 128 / 255);
+    assert.strictEqual(result[0].b, 0);
+  });
+
+  test("captures Color3.new with floats", () => {
+    const result = extractColorLiterals("local x = Color3.new(0.5, 0.5, 0.5)");
+    assert.strictEqual(result.length, 1);
+    assert.strictEqual(result[0].r, 0.5);
+  });
+
+  test("rejects non-numeric args", () => {
+    const result = extractColorLiterals(
+      "local x = Color3.fromRGB(getR(), 0, 0)"
+    );
+    assert.strictEqual(result.length, 0);
+  });
+
+  test("rejects out-of-range Color3.new", () => {
+    const result = extractColorLiterals("local x = Color3.new(2, 3, 4)");
+    assert.strictEqual(result.length, 0);
+  });
+
+  test("captures multiple in one document", () => {
+    const result = extractColorLiterals(
+      `local a = Color3.fromRGB(1, 2, 3)\nlocal b = Color3.fromRGB(4, 5, 6)`
+    );
+    assert.strictEqual(result.length, 2);
+  });
+});
+
+suite("findAllCreateElementCalls", () => {
+  test("flat list of all calls", () => {
+    const text = `
+local frame = e("Frame", {
+  Name = "Outer",
+}, {
+  e("TextLabel", { Text = "x" }),
+  e("UICorner", {}),
+})
+`.trimStart();
+    const calls = findAllCreateElementCalls(text, _internal.DEFAULT_ALIASES);
+    assert.strictEqual(calls.length, 3);
+    assert.strictEqual(calls[0].className, "Frame");
+    assert.strictEqual(calls[0].nameProp, "Outer");
+    assert.strictEqual(calls[1].className, "TextLabel");
+    assert.strictEqual(calls[2].className, "UICorner");
+  });
+
+  test("identifier-named components are detected with isStringLiteralName=false", () => {
+    const text = `e(MyComp, { LayoutOrder = 1 })`;
+    const calls = findAllCreateElementCalls(text, _internal.DEFAULT_ALIASES);
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(calls[0].className, "MyComp");
+    assert.strictEqual(calls[0].isStringLiteralName, false);
+  });
+});
+
+suite("buildCallTree", () => {
+  test("nests children under their parent", () => {
+    const text = `
+local frame = e("Frame", {
+  Name = "Outer",
+}, {
+  e("TextLabel", { Text = "x" }, {
+    e("UIPadding", {}),
+  }),
+  e("UICorner", {}),
+})
+`.trimStart();
+    const calls = findAllCreateElementCalls(text, _internal.DEFAULT_ALIASES);
+    const tree = buildCallTree(calls);
+    assert.strictEqual(tree.length, 1);
+    const root = tree[0];
+    assert.strictEqual(root.call.className, "Frame");
+    assert.strictEqual(root.children.length, 2);
+    assert.strictEqual(root.children[0].call.className, "TextLabel");
+    assert.strictEqual(root.children[0].children.length, 1);
+    assert.strictEqual(root.children[0].children[0].call.className, "UIPadding");
+    assert.strictEqual(root.children[1].call.className, "UICorner");
+  });
+
+  test("siblings outside any parent become roots", () => {
+    const text = `e("Frame", {})\ne("TextLabel", {})`;
+    const calls = findAllCreateElementCalls(text, _internal.DEFAULT_ALIASES);
+    const tree = buildCallTree(calls);
+    assert.strictEqual(tree.length, 2);
+  });
+});
+
+suite("collectLocalBindings", () => {
+  test("captures `local X = require(...)` lines", () => {
+    const text = `
+local Foo = require(script.Foo)
+local Bar = require(script.Parent.Bar)
+local x = 1
+local function helper() end
+`.trimStart();
+    const set = _testing.collectLocalBindings(text);
+    assert.ok(set.has("Foo"));
+    assert.ok(set.has("Bar"));
+    assert.ok(set.has("x"));
+    assert.ok(set.has("helper"));
+  });
+
+  test("ignores bindings inside string literals", () => {
+    const text = `local s = "local Hidden = nothing"`;
+    const set = _testing.collectLocalBindings(text);
+    assert.ok(set.has("s"));
+    assert.ok(!set.has("Hidden"));
+  });
+});
+
+suite("buildFontFaceReplacement", () => {
+  test("known font maps to family + weight", () => {
+    assert.strictEqual(
+      _testing.buildFontFaceReplacement("GothamBold"),
+      'Font.fromName("Gotham", Enum.FontWeight.Bold)'
+    );
+  });
+
+  test("italic variant uses Font.new", () => {
+    const r = _testing.buildFontFaceReplacement("SourceSansItalic");
+    assert.ok(r.includes("Enum.FontStyle.Italic"));
+  });
+
+  test("unknown font falls back to the enum name as family", () => {
+    assert.strictEqual(
+      _testing.buildFontFaceReplacement("Mysterious"),
+      'Font.fromName("Mysterious", Enum.FontWeight.Regular)'
+    );
+  });
+});
+
+suite("buildRelativePath", () => {
+  function uri(p: string) {
+    return vscode.Uri.file(p);
+  }
+  test("siblings in the same dir", () => {
+    const from = uri("/proj/src/UI/Shop.lua");
+    const to = uri("/proj/src/UI/GamepassCard.lua");
+    assert.strictEqual(
+      _testing.buildRelativePath(from, to),
+      "script.Parent.GamepassCard"
+    );
+  });
+
+  test("component in a subfolder", () => {
+    const from = uri("/proj/src/UI/Shop.lua");
+    const to = uri("/proj/src/UI/Components/GamepassCard.lua");
+    assert.strictEqual(
+      _testing.buildRelativePath(from, to),
+      "script.Parent.Components.GamepassCard"
+    );
+  });
+
+  test("component up a level", () => {
+    const from = uri("/proj/src/UI/Shop/index.lua");
+    const to = uri("/proj/src/UI/GamepassCard.lua");
+    assert.strictEqual(
+      _testing.buildRelativePath(from, to),
+      "script.Parent.Parent.GamepassCard"
+    );
+  });
+});
+
+suite("Cross-file aggregation", () => {
+  test("a component defined in one document is found when looking up by name", () => {
+    const fileA = `---@extends Frame\nlocal function GamepassCard(props) end\nreturn GamepassCard`;
+    const fileB = `local function Shop() return e(GamepassCard, {}) end`;
+
+    const indexA = scanDocument(fileA, ALIASES);
+    const indexB = scanDocument(fileB, ALIASES);
+
+    // File B (the consumer) has no GamepassCard definition.
+    assert.strictEqual(indexB.has("GamepassCard"), false);
+
+    // File A has it with the @extends annotation.
+    const info = indexA.get("GamepassCard");
+    assert.strictEqual(info?.annotations.extendsClass, "Frame");
+
+    // Aggregation: consumer's same-file lookup misses → fall back to file A.
+    const acrossFiles = indexB.get("GamepassCard") ?? indexA.get("GamepassCard");
+    assert.strictEqual(acrossFiles?.annotations.extendsClass, "Frame");
   });
 });

@@ -2,7 +2,7 @@
   "name": "react-luau-props-helper",
   "displayName": "React Luau Props Helper",
   "description": "Customizable prop autocomplete for React-Luau createElement calls.",
-  "version": "1.2.0",
+  "version": "1.5.5",
   "publisher": "leifstout",
   "license": "MIT",
   "repository": {
@@ -45,6 +45,16 @@
         "extensions": [
           ".luau"
         ]
+      }
+    ],
+    "snippets": [
+      {
+        "language": "lua",
+        "path": "./snippets/react-luau.code-snippets"
+      },
+      {
+        "language": "luau",
+        "path": "./snippets/react-luau.code-snippets"
       }
     ],
     "configuration": {
@@ -109,6 +119,102 @@
           ],
           "default": "value-with-comma",
           "markdownDescription": "Controls what gets inserted when you accept a completion."
+        },
+        "reactLuauPropsHelper.typeAwareValues": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "When the prop's type is known (e.g. `BackgroundColor3` is `Color3`), insert a value template alongside the prop name. For example, `BackgroundColor3` becomes `BackgroundColor3 = Color3.fromRGB(255, 255, 255)` with tab stops at each colour channel. Disable for the older minimal-snippet behavior."
+        },
+        "reactLuauPropsHelper.documentSymbols.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "When enabled (default), the extension provides Document Symbols for the React tree — visible in the Outline panel, the Breadcrumbs bar, and `Cmd+Shift+O` (Go to Symbol in File). Disable if you prefer your editor's outline to show only top-level Lua structure."
+        },
+        "reactLuauPropsHelper.colorPreview.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "When enabled (default), `Color3.fromRGB(...)` and `Color3.new(...)` get a gutter swatch and a colour picker. Disable if another extension (such as a Roblox API extension) already provides this and you're seeing duplicate pickers."
+        },
+        "reactLuauPropsHelper.inlayHints.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "When enabled (default), every multi-line `e(...)` call gets a label at its closing `)` showing the element's class. VS Code's master toggle is `editor.inlayHints.enabled`; this lets you disable just this extension's hints without affecting others."
+        },
+        "reactLuauPropsHelper.inlayHints.scope": {
+          "type": "string",
+          "enum": [
+            "all",
+            "ancestors"
+          ],
+          "enumDescriptions": [
+            "Show hints for every multi-line createElement call in the file.",
+            "Only show hints for calls that contain the cursor (the innermost call and each of its ancestors). Keeps the rest of the file uncluttered. (Default.)"
+          ],
+          "default": "ancestors",
+          "markdownDescription": "How many inlay hints to show at once."
+        },
+        "reactLuauPropsHelper.inlayHints.position": {
+          "type": "string",
+          "enum": [
+            "before-comma",
+            "after-comma"
+          ],
+          "enumDescriptions": [
+            "Render the label between the closing `)` and the trailing `,`.",
+            "Render the label after the trailing `,`, so the comma stays glued to the closing `)`. (Default.)"
+          ],
+          "default": "after-comma",
+          "markdownDescription": "Where to render the inlay-hint label relative to the trailing comma."
+        },
+        "reactLuauPropsHelper.warnReservedPropNames": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Warn when a custom component declares a `---@prop` whose name shadows a Roblox property of its declared (or detected) base class. Off by default to avoid surprising users with new warnings."
+        },
+        "reactLuauPropsHelper.deprecationDiagnostics": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show diagnostics for deprecated patterns: `Font = Enum.Font.X` (use `FontFace`), `TextColor = ...` (typo of `TextColor3`). Quick-fixes available via the lightbulb."
+        },
+        "reactLuauPropsHelper.autoImport.enabled": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Opt-in. When enabled, `e(SomeComponent, …)` for a component the workspace knows about but the current file doesn't `require` produces an Information diagnostic with a quick-fix that inserts the require line."
+        },
+        "reactLuauPropsHelper.autoImport.style": {
+          "type": "string",
+          "enum": [
+            "relative",
+            "alias"
+          ],
+          "enumDescriptions": [
+            "Compute a `script.Parent…X` chain from the current file's directory to the component's file.",
+            "Use one of the configured aliases below. Falls back to `relative` if no alias matches."
+          ],
+          "default": "relative",
+          "markdownDescription": "How to build the `require(...)` path for auto-imports."
+        },
+        "reactLuauPropsHelper.autoImport.aliases": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "properties": {
+              "filesystemPath": {
+                "type": "string",
+                "description": "Workspace-relative path prefix on disk, e.g. `src/Client/UI/Components`."
+              },
+              "robloxPath": {
+                "type": "string",
+                "description": "Roblox-style prefix to substitute, e.g. `script.Components` or `ReplicatedStorage.Packages`."
+              }
+            },
+            "required": [
+              "filesystemPath",
+              "robloxPath"
+            ]
+          },
+          "markdownDescription": "For `alias` style: map workspace-relative filesystem prefixes to Roblox-style require prefixes. The first matching alias wins."
         }
       }
     }
