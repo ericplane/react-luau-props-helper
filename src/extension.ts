@@ -1,7 +1,8 @@
 import * as vscode from "vscode";
 
-// Built-in defaults; these match the package.json default.
-// They are used if the user has no config, or if a class isn't in the config.
+// Built-in defaults. Used when no user entry exists for a class. A user can
+// override (or disable, via empty array) any of these via the
+// `reactLuauPropsHelper.props` setting.
 const defaultPropsMap: Record<string, string[]> = {
   ScreenGui: [
     "Enabled",
@@ -274,17 +275,25 @@ const defaultPropsMap: Record<string, string[]> = {
   UIGradient: ["Color", "Transparency", "Offset", "Rotation", "Enabled"],
 };
 
+const DEFAULT_ALIASES = [
+  "e",
+  "createElement",
+  "React.createElement",
+  "Roact.createElement",
+];
+
 export function activate(context: vscode.ExtensionContext) {
   const selector: vscode.DocumentSelector = [
     { language: "lua", scheme: "file" },
     { language: "luau", scheme: "file" },
   ];
 
+  // No trigger characters: VS Code already fires completion as the user types
+  // identifier characters. Registering space/newline as triggers caused the
+  // suggest widget to steal Tab from GitHub Copilot's inline ghost text.
   const provider = vscode.languages.registerCompletionItemProvider(
     selector,
-    new ReactLuauPropsCompletionProvider(),
-    " ",
-    "\n"
+    new ReactLuauPropsCompletionProvider()
   );
 
   context.subscriptions.push(provider);
@@ -299,144 +308,285 @@ class ReactLuauPropsCompletionProvider
     document: vscode.TextDocument,
     position: vscode.Position
   ): vscode.ProviderResult<vscode.CompletionItem[]> {
-    // Text from start of document to cursor
-    const range = new vscode.Range(new vscode.Position(0, 0), position);
-    let textBeforeCursor = document.getText(range);
+    const text = document.getText();
+    const cursorOffset = document.offsetAt(position);
 
-    // Limit size for performance
-    const maxLookback = 2000;
-    if (textBeforeCursor.length > maxLookback) {
-      textBeforeCursor = textBeforeCursor.slice(
-        textBeforeCursor.length - maxLookback
-      );
-    }
-
-    const className = this.getEnclosingClassName(textBeforeCursor);
-    if (!className) {
+    const detected = findEnclosingPropsCall(text, cursorOffset, getAliases());
+    if (!detected) {
       return undefined;
     }
 
-    // Only suggest if we actually have props for this class
-    const props = this.getPropsForClass(className);
+    const props = getPropsForClass(detected.className);
     if (!props || props.length === 0) {
       return undefined;
     }
 
-    if (!this.isInsidePropsObject(textBeforeCursor, className)) {
-      return undefined;
-    }
+    const wordRange = document.getWordRangeAtPosition(
+      position,
+      /[A-Za-z_][A-Za-z0-9_]*/
+    );
 
-    return this.buildItemsForProps(className, props);
-  }
-
-  /**
-   * Find the last call before the cursor that looks like:
-   *   React.createElement("ClassName", {
-   *   e("ClassName", {
-   *
-   * Returns the ClassName or undefined.
-   */
-  private getEnclosingClassName(text: string): string | undefined {
-    const pattern =
-      /(React\.createElement|e)\s*\(\s*(?:(["'])([A-Za-z0-9_]+)\2|([A-Za-z0-9_]+))\s*,\s*{/g;
-
-    let match: RegExpExecArray | null;
-    let lastClassName: string | undefined = undefined;
-
-    while ((match = pattern.exec(text)) !== null) {
-      const fromString = match[3]; // "TextLabel"
-      const fromIdent = match[4]; // TextLabel
-      const className = fromString || fromIdent;
-      if (className) {
-        lastClassName = className;
-      }
-    }
-
-    return lastClassName;
-  }
-
-  /**
-   * Check if the cursor is still inside the props object for the last
-   * React.createElement/e("ClassName", { ... }) call.
-   *
-   * We:
-   *   - find the last matching call for this className
-   *   - start at the '{' and track brace depth
-   *   - if we hit depth 0 again before cursor → we've closed the object
-   */
-  private isInsidePropsObject(text: string, className: string): boolean {
-    const pattern =
-      /(React\.createElement|e)\s*\(\s*(?:(["'])([A-Za-z0-9_]+)\2|([A-Za-z0-9_]+))\s*,\s*{/g;
-
-    let match: RegExpExecArray | null;
-    let propsStartIndex = -1;
-
-    while ((match = pattern.exec(text)) !== null) {
-      const fromString = match[3];
-      const fromIdent = match[4];
-      const matchedClassName = fromString || fromIdent;
-
-      if (matchedClassName !== className) continue;
-
-      const braceIndexInMatch = match[0].lastIndexOf("{");
-      propsStartIndex = match.index + braceIndexInMatch;
-    }
-
-    if (propsStartIndex === -1) {
-      return false;
-    }
-
-    let depth = 0;
-    let ended = false;
-
-    for (let i = propsStartIndex; i < text.length; i++) {
-      const ch = text[i];
-
-      if (ch === "{") {
-        depth++;
-      } else if (ch === "}") {
-        depth--;
-        if (depth === 0 && i > propsStartIndex) {
-          ended = true;
-          break;
-        }
-      }
-    }
-
-    // Not ended yet → still inside props object
-    return !ended;
-  }
-
-  /**
-   * Get props for a given class name, using:
-   *   1) user configuration if present
-   *   2) built-in defaults otherwise
-   */
-  private getPropsForClass(className: string): string[] | undefined {
-    const config = vscode.workspace.getConfiguration("reactLuauPropsHelper");
-
-    const userMap =
-      config.get<Record<string, string[]>>("props", defaultPropsMap) ||
-      defaultPropsMap;
-
-    return userMap[className] || defaultPropsMap[className];
-  }
-
-  /**
-   * Build completion items with `Name = ` insertion.
-   */
-  private buildItemsForProps(
-    className: string,
-    props: string[]
-  ): vscode.CompletionItem[] {
-    return props.map((name) => {
-      const item = new vscode.CompletionItem(
-        name,
-        vscode.CompletionItemKind.Property
-      );
-      item.insertText = new vscode.SnippetString(`${name} = $0`);
-      item.detail = `${className} property (React Luau helper)`;
-      return item;
-    });
+    return buildItemsForProps(detected.className, props, wordRange);
   }
 }
+
+function getAliases(): string[] {
+  const config = vscode.workspace.getConfiguration("reactLuauPropsHelper");
+  const fromConfig = config.get<string[]>(
+    "createElementAliases",
+    DEFAULT_ALIASES
+  );
+  if (!Array.isArray(fromConfig) || fromConfig.length === 0) {
+    return DEFAULT_ALIASES;
+  }
+  return fromConfig;
+}
+
+function getPropsForClass(className: string): string[] | undefined {
+  const config = vscode.workspace.getConfiguration("reactLuauPropsHelper");
+  const userMap = config.get<Record<string, string[]>>("props", {}) ?? {};
+
+  // Presence in user config is authoritative. An explicit `[]` disables the
+  // class. Fall back to defaults only when the key is absent.
+  if (Object.prototype.hasOwnProperty.call(userMap, className)) {
+    return userMap[className];
+  }
+  return defaultPropsMap[className];
+}
+
+function buildItemsForProps(
+  className: string,
+  props: string[],
+  range: vscode.Range | undefined
+): vscode.CompletionItem[] {
+  const config = vscode.workspace.getConfiguration("reactLuauPropsHelper");
+  const snippetMode = config.get<string>("snippetMode", "value-with-comma");
+
+  return props.map((name, index) => {
+    const item = new vscode.CompletionItem(
+      name,
+      vscode.CompletionItemKind.Property
+    );
+    item.insertText = buildSnippet(name, snippetMode);
+    item.detail = `${className} property`;
+    item.documentation = new vscode.MarkdownString(
+      `\`${className}.${name}\` — suggested by React Luau Props Helper.`
+    );
+    item.filterText = name;
+    // Preserve declared order; pad to keep stable sort across props lists.
+    item.sortText = String(index).padStart(4, "0");
+    if (range) {
+      item.range = range;
+    }
+    return item;
+  });
+}
+
+function buildSnippet(name: string, mode: string): vscode.SnippetString {
+  switch (mode) {
+    case "name-only":
+      return new vscode.SnippetString(name);
+    case "value":
+      return new vscode.SnippetString(`${name} = $0`);
+    case "value-with-comma":
+    default:
+      return new vscode.SnippetString(`${name} = $1,$0`);
+  }
+}
+
+// ============================================================================
+// Detection helpers (pure; exported for unit tests).
+// ============================================================================
+
+export interface EnclosingCall {
+  className: string;
+  isStringLiteralName: boolean;
+}
+
+/**
+ * Build a per-character bitmap where `true` means the character is *code*
+ * (not inside a Lua string or comment). Quotes/comment delimiters are kept
+ * as code so that downstream regexes can still see them.
+ */
+export function buildCodeMask(text: string): boolean[] {
+  const mask = new Array<boolean>(text.length).fill(true);
+  let i = 0;
+
+  while (i < text.length) {
+    const c = text[i];
+
+    // Comments: `--`, `--[[ ... ]]`, `--[=*[ ... ]=*]`
+    if (c === "-" && text[i + 1] === "-") {
+      const blockMatch = /^\[(=*)\[/.exec(text.slice(i + 2));
+      if (blockMatch) {
+        const level = blockMatch[1].length;
+        const closeStr = "]" + "=".repeat(level) + "]";
+        const searchFrom = i + 2 + blockMatch[0].length;
+        const closeIdx = text.indexOf(closeStr, searchFrom);
+        const endIdx = closeIdx === -1 ? text.length : closeIdx + closeStr.length;
+        for (let j = i; j < endIdx; j++) {
+          mask[j] = false;
+        }
+        i = endIdx;
+        continue;
+      }
+      while (i < text.length && text[i] !== "\n") {
+        mask[i] = false;
+        i++;
+      }
+      continue;
+    }
+
+    // Quoted strings: keep the quotes as code so a later regex can spot
+    // them; mask the interior only.
+    if (c === '"' || c === "'") {
+      const quote = c;
+      i++;
+      while (i < text.length) {
+        if (text[i] === "\\" && i + 1 < text.length) {
+          mask[i] = false;
+          if (text[i + 1] !== "\n") {
+            mask[i + 1] = false;
+          }
+          i += 2;
+          continue;
+        }
+        if (text[i] === quote) {
+          i++;
+          break;
+        }
+        if (text[i] === "\n") {
+          // Unterminated string: stop masking at end-of-line.
+          break;
+        }
+        mask[i] = false;
+        i++;
+      }
+      continue;
+    }
+
+    // Long-bracket strings: `[[ ... ]]` / `[=*[ ... ]=*]`. Keep delimiters as
+    // code; mask only the interior.
+    if (c === "[") {
+      const longMatch = /^\[(=*)\[/.exec(text.slice(i));
+      if (longMatch) {
+        const level = longMatch[1].length;
+        const closeStr = "]" + "=".repeat(level) + "]";
+        const innerStart = i + longMatch[0].length;
+        const closeIdx = text.indexOf(closeStr, innerStart);
+        const innerEnd = closeIdx === -1 ? text.length : closeIdx;
+        for (let j = innerStart; j < innerEnd; j++) {
+          mask[j] = false;
+        }
+        i = closeIdx === -1 ? text.length : closeIdx + closeStr.length;
+        continue;
+      }
+    }
+
+    i++;
+  }
+
+  return mask;
+}
+
+/**
+ * Walk backward from the cursor to find the `{` of the immediately enclosing
+ * block. If that block opens a createElement-style props table, return the
+ * class/component name. Otherwise return undefined.
+ */
+export function findEnclosingPropsCall(
+  text: string,
+  cursorIndex: number,
+  aliases: string[]
+): EnclosingCall | undefined {
+  const mask = buildCodeMask(text);
+
+  let braceDepth = 0;
+  let parenDepth = 0;
+  let openBraceIdx = -1;
+
+  for (let i = cursorIndex - 1; i >= 0; i--) {
+    if (!mask[i]) {
+      continue;
+    }
+    const c = text[i];
+    if (c === "}") {
+      braceDepth++;
+    } else if (c === "{") {
+      if (braceDepth === 0) {
+        // If we're inside an unmatched `(`, the cursor is in an expression,
+        // not directly in the props object — skip.
+        if (parenDepth < 0) {
+          return undefined;
+        }
+        openBraceIdx = i;
+        break;
+      }
+      braceDepth--;
+    } else if (c === ")") {
+      parenDepth++;
+    } else if (c === "(") {
+      parenDepth--;
+    }
+  }
+
+  if (openBraceIdx === -1) {
+    return undefined;
+  }
+
+  const aliasPattern = buildAliasAlternation(aliases);
+
+  // The function-call header lives in a small window before the `{`. Limit
+  // the slice so the regex engine doesn't churn through huge files.
+  const sliceStart = Math.max(0, openBraceIdx - 500);
+  const before = text.slice(sliceStart, openBraceIdx);
+
+  // (?:^|[^A-Za-z0-9_.]) — guard so `e` isn't matched inside identifiers
+  //   like `frame`, `case`, `Recipe`, etc.
+  // (?:alias) — one of the configured createElement aliases.
+  // \s*\(\s* — open paren.
+  // first arg — quoted string ("X" or 'X') OR dotted identifier (X / X.Y).
+  // \s*,\s* — comma separator.
+  // $ — end of slice (i.e., right before the `{` we found).
+  const pattern = new RegExp(
+    `(?:^|[^A-Za-z0-9_.])(?:${aliasPattern})\\s*\\(\\s*` +
+      `(?:"([A-Za-z_][A-Za-z0-9_]*)"|'([A-Za-z_][A-Za-z0-9_]*)'|` +
+      `([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*))` +
+      `\\s*,\\s*$`
+  );
+
+  const match = pattern.exec(before);
+  if (!match) {
+    return undefined;
+  }
+
+  const dq = match[1];
+  const sq = match[2];
+  const id = match[3];
+  const name = dq || sq || id;
+  if (!name) {
+    return undefined;
+  }
+
+  return {
+    className: name,
+    isStringLiteralName: !!(dq || sq),
+  };
+}
+
+function buildAliasAlternation(aliases: string[]): string {
+  // Longest first so multi-segment names like `React.createElement` win over
+  // bare `createElement` during alternation.
+  const sorted = [...aliases].sort((a, b) => b.length - a.length);
+  return sorted.map(escapeRegex).join("|");
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.+*?^$()[\]{}|\\]/g, "\\$&");
+}
+
+// Exported for tests.
+export const _internal = {
+  defaultPropsMap,
+  DEFAULT_ALIASES,
+};
