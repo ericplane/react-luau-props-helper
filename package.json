@@ -4,6 +4,12 @@
   "description": "Customizable prop autocomplete for React-Luau createElement calls.",
   "version": "1.5.5",
   "publisher": "leifstout",
+  "contributors": [
+    {
+      "name": "ericplane",
+      "url": "https://github.com/ericplane"
+    }
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
