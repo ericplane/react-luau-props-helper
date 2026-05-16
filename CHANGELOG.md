@@ -4,6 +4,36 @@ All notable changes to the "react-luau-props-helper" extension will be documente
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [1.2.0]
+
+### Added
+
+- **Auto-detection from a component's root element.** When a function
+  component returns `e("Frame", ...)` (or any other class) at the top, the
+  extension now offers that class's props automatically when the component
+  is used — no config needed for the common "this is basically a Frame +"
+  case.
+- **`---@extends ClassName` and `---@prop name [type]` annotations.**
+  Lua-LS-style triple-dash comments above a function declaration. Read by
+  this extension, ignored as a regular comment by every other tool. Lets
+  you declare the contract once, next to the component.
+- **Typed-signature inference.** A `props: { foo, bar }` parameter — or
+  `props: SomeTypeAlias` resolved to a same-file `type SomeTypeAlias = { ... }`
+  — provides prop suggestions automatically.
+- **Object form for `reactLuauPropsHelper.props`.** Entries can now be
+  `{ "extends": "Frame", "props": ["customProp"] }` to inherit from a base
+  class and append extras. The legacy array form continues to work.
+- Recursive `extends` resolution with cycle protection (depth ≤ 8).
+
+### Known limitations
+
+- In-file inference is single-file: prop types defined in `require`d
+  modules aren't followed.
+- Type intersections (`Frame & MyProps`) and generics (`Props<T>`) are not
+  parsed.
+- The first top-level `return e("X", ...)` wins for auto-detection;
+  conditional returns aren't merged.
+
 ## [1.1.0]
 
 ### Fixed

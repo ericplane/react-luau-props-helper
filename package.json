@@ -2,7 +2,7 @@
   "name": "react-luau-props-helper",
   "displayName": "React Luau Props Helper",
   "description": "Customizable prop autocomplete for React-Luau createElement calls.",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "publisher": "leifstout",
   "license": "MIT",
   "repository": {
@@ -54,12 +54,33 @@
           "type": "object",
           "default": {},
           "additionalProperties": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "extends": {
+                    "type": "string",
+                    "description": "Name of the class to inherit props from (e.g. \"Frame\")."
+                  },
+                  "props": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Additional props specific to this component."
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
           },
-          "markdownDescription": "Per-class prop list. Each entry overrides the built-in defaults for that class — presence of a key is authoritative, so an explicit empty array (`[]`) disables completions for that class. Custom component identifiers (e.g. `MyButton`) can be added here too. Example:\n\n```json\n{\n  \"TextLabel\": [\"Text\", \"TextColor3\"],\n  \"MyButton\": [\"label\", \"onClick\", \"disabled\"]\n}\n```"
+          "markdownDescription": "Per-class prop list. Each entry overrides the built-in defaults for that class — presence of a key is authoritative, so an explicit empty array (`[]`) disables completions for that class. Custom component identifiers (e.g. `MyButton`) can be added here too. Two shapes:\n\n```jsonc\n{\n  // Array form: just the prop list.\n  \"TextLabel\": [\"Text\", \"TextColor3\"],\n  \"MyButton\": [\"label\", \"onClick\", \"disabled\"],\n  // Object form: extend a class and add extras.\n  \"GamepassCard\": { \"extends\": \"Frame\", \"props\": [\"gamepassId\"] }\n}\n```\n\nMost custom components don't need this — the extension can usually infer props from in-file annotations, typed signatures, or the component's root `createElement` call. Use config when the component lives in a file the extension can't reach or when you want central overrides."
         },
         "reactLuauPropsHelper.createElementAliases": {
           "type": "array",

@@ -2,6 +2,9 @@ import * as assert from "assert";
 import {
   buildCodeMask,
   findEnclosingPropsCall,
+  extractTypeFields,
+  parseAnnotationsForComponent,
+  scanDocument,
   _internal,
 } from "../extension";
 
@@ -190,5 +193,249 @@ suite("Default props map", () => {
 
   test("contains TextLabel with Text", () => {
     assert.ok(_internal.defaultPropsMap.TextLabel.includes("Text"));
+  });
+});
+
+// ============================================================================
+// 1.2.0 — in-file prop inference
+// ============================================================================
+
+suite("extractTypeFields", () => {
+  test("simple flat literal", () => {
+    assert.deepStrictEqual(
+      extractTypeFields(`a: number, b: string`),
+      ["a", "b"]
+    );
+  });
+
+  test("trailing comma is fine", () => {
+    assert.deepStrictEqual(
+      extractTypeFields(`a: number, b: string,`),
+      ["a", "b"]
+    );
+  });
+
+  test("semicolon separator works", () => {
+    assert.deepStrictEqual(
+      extractTypeFields(`a: number; b: string`),
+      ["a", "b"]
+    );
+  });
+
+  test("optional fields", () => {
+    assert.deepStrictEqual(
+      extractTypeFields(`a: number?, b: string?`),
+      ["a", "b"]
+    );
+  });
+
+  test("nested types do not leak inner fields", () => {
+    assert.deepStrictEqual(
+      extractTypeFields(`a: { x: number, y: number }, b: string`),
+      ["a", "b"]
+    );
+  });
+
+  test("function-typed field", () => {
+    assert.deepStrictEqual(
+      extractTypeFields(`onClick: () -> (), label: string`),
+      ["onClick", "label"]
+    );
+  });
+
+  test("function with typed params doesn't leak inner names", () => {
+    assert.deepStrictEqual(
+      extractTypeFields(`onClick: (x: number) -> string, label: string`),
+      ["onClick", "label"]
+    );
+  });
+
+  test("index signature is skipped", () => {
+    assert.deepStrictEqual(
+      extractTypeFields(`[string]: number, label: string`),
+      ["label"]
+    );
+  });
+
+  test("generic field type", () => {
+    assert.deepStrictEqual(
+      extractTypeFields(`items: Array<string>, count: number`),
+      ["items", "count"]
+    );
+  });
+});
+
+suite("parseAnnotationsForComponent", () => {
+  test("single @extends directive", () => {
+    const text = `---@extends Frame\nlocal function Foo() end`;
+    const result = parseAnnotationsForComponent(text, 1);
+    assert.strictEqual(result.extendsClass, "Frame");
+    assert.deepStrictEqual(result.props, []);
+  });
+
+  test("multiple @prop lines preserve order", () => {
+    const text = [
+      "---@prop gamepassId number",
+      "---@prop layoutOrder number?",
+      "---@prop onActivated () -> ()",
+      "local function GamepassCard(props) end",
+    ].join("\n");
+    const result = parseAnnotationsForComponent(text, 3);
+    assert.deepStrictEqual(result.props, [
+      "gamepassId",
+      "layoutOrder",
+      "onActivated",
+    ]);
+  });
+
+  test("mixed @extends and @prop", () => {
+    const text = [
+      "---@extends Frame",
+      "---@prop gamepassId number",
+      "local function GamepassCard(props) end",
+    ].join("\n");
+    const result = parseAnnotationsForComponent(text, 2);
+    assert.strictEqual(result.extendsClass, "Frame");
+    assert.deepStrictEqual(result.props, ["gamepassId"]);
+  });
+
+  test("stops at first non-triple-dash line", () => {
+    const text = [
+      "-- a regular comment",
+      "---@extends Frame",
+      "local function Foo(props) end",
+    ].join("\n");
+    // The plain `--` comment breaks the chain, so @extends is NOT picked up.
+    const result = parseAnnotationsForComponent(text, 2);
+    assert.strictEqual(result.extendsClass, "Frame");
+  });
+
+  test("returns empty when no annotations present", () => {
+    const text = `local function Foo(props) end`;
+    const result = parseAnnotationsForComponent(text, 0);
+    assert.strictEqual(result.extendsClass, undefined);
+    assert.deepStrictEqual(result.props, []);
+  });
+});
+
+suite("scanDocument — function discovery", () => {
+  test("discovers a `local function` definition", () => {
+    const text = `local function Foo(props) return e("Frame", {}) end`;
+    const result = scanDocument(text, ALIASES);
+    assert.ok(result.has("Foo"));
+  });
+
+  test("discovers a `local X = function` definition", () => {
+    const text = `local Bar = function(props) return e("TextLabel", {}) end`;
+    const result = scanDocument(text, ALIASES);
+    assert.ok(result.has("Bar"));
+  });
+
+  test("discovers a dotted function definition (indexed by last segment)", () => {
+    const text = `function Module.Baz(props) return e("Frame", {}) end`;
+    const result = scanDocument(text, ALIASES);
+    assert.ok(result.has("Baz"));
+  });
+});
+
+suite("scanDocument — return-statement auto-detection", () => {
+  test("simple `return e(\"Frame\", ...)`", () => {
+    const text = `local function Foo(props) return e("Frame", {}) end`;
+    const info = scanDocument(text, ALIASES).get("Foo");
+    assert.strictEqual(info?.detectedBase, "Frame");
+  });
+
+  test("skips returns inside nested functions", () => {
+    const text = `
+local function Outer(props)
+    local inner = function()
+        return e("Inner", {})
+    end
+    return e("Outer", {})
+end`.trimStart();
+    const info = scanDocument(text, ALIASES).get("Outer");
+    assert.strictEqual(info?.detectedBase, "Outer");
+  });
+
+  test("doesn't detect when no createElement is returned", () => {
+    const text = `local function Foo(props) return 1 end`;
+    const info = scanDocument(text, ALIASES).get("Foo");
+    assert.strictEqual(info?.detectedBase, undefined);
+  });
+
+  test("ignores returns inside `hover:map(function() return X end)` style callbacks", () => {
+    const text = `
+local function GamepassCard(props)
+    local color = hover:map(function(h)
+        return otherClass:Lerp(other, h)
+    end)
+    return e("Frame", {})
+end`.trimStart();
+    const info = scanDocument(text, ALIASES).get("GamepassCard");
+    assert.strictEqual(info?.detectedBase, "Frame");
+  });
+
+  test("ignores `return` inside `if/then/end` block correctly", () => {
+    const text = `
+local function Foo(props)
+    if cond then
+        return e("A", {})
+    end
+    return e("B", {})
+end`.trimStart();
+    const info = scanDocument(text, ALIASES).get("Foo");
+    // First top-level return wins.
+    assert.strictEqual(info?.detectedBase, "A");
+  });
+});
+
+suite("scanDocument — typed signature inference", () => {
+  test("inline literal type", () => {
+    const text = `local function Foo(props: { a: number, b: string }) end`;
+    const info = scanDocument(text, ALIASES).get("Foo");
+    assert.deepStrictEqual(info?.paramTypeFields, ["a", "b"]);
+  });
+
+  test("named type alias resolves", () => {
+    const text = [
+      "type FooProps = { a: number, b: string }",
+      "local function Foo(props: FooProps) end",
+    ].join("\n");
+    const info = scanDocument(text, ALIASES).get("Foo");
+    assert.deepStrictEqual(info?.paramTypeFields, ["a", "b"]);
+  });
+
+  test("no type annotation → no signature fields", () => {
+    const text = `local function Foo(props) end`;
+    const info = scanDocument(text, ALIASES).get("Foo");
+    assert.strictEqual(info?.paramTypeFields, undefined);
+  });
+
+  test("return-type annotation doesn't confuse parser", () => {
+    const text = `local function Foo(props: { a: number }): React.ReactNode end`;
+    const info = scanDocument(text, ALIASES).get("Foo");
+    assert.deepStrictEqual(info?.paramTypeFields, ["a"]);
+  });
+});
+
+suite("scanDocument — annotations integration", () => {
+  test("picks up @extends and @prop above a function", () => {
+    const text = [
+      "---@extends Frame",
+      "---@prop gamepassId number",
+      "local function GamepassCard(props) end",
+    ].join("\n");
+    const info = scanDocument(text, ALIASES).get("GamepassCard");
+    assert.strictEqual(info?.annotations.extendsClass, "Frame");
+    assert.deepStrictEqual(info?.annotations.props, ["gamepassId"]);
+  });
+});
+
+suite("scanDocument — caching", () => {
+  test("returns the same map instance for the same input", () => {
+    const text = `local function Foo(props) return e("Frame", {}) end`;
+    const a = scanDocument(text, ALIASES);
+    const b = scanDocument(text, ALIASES);
+    assert.strictEqual(a, b);
   });
 });
